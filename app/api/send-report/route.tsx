@@ -227,9 +227,7 @@ export async function POST(request: NextRequest) {
     `
 
     const recipients = [emailData.email]
-    if (emailData.adminEmail) {
-      recipients.push(emailData.adminEmail)
-    }
+    recipients.push("mail@richardstoop.nl")
 
     try {
       console.log("[v0] Attempting to send email via Resend...")

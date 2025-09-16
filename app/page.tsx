@@ -164,6 +164,49 @@ export default function SavingsCalculator() {
     setIsSubmitting(true)
 
     try {
+      const hubspotData = {
+        fields: [
+          { name: "firstname", value: emailData.name.split(" ")[0] },
+          { name: "lastname", value: emailData.name.split(" ").slice(1).join(" ") || emailData.name },
+          { name: "email", value: emailData.email },
+          { name: "company", value: emailData.company },
+          { name: "city", value: emailData.location },
+          // Add calculator data as custom fields
+          { name: "organisation_name", value: formData.organisationName },
+          { name: "number_of_employees", value: formData.numberOfEmployees },
+          calculationMethod === "m2"
+            ? { name: "total_office_size_m2", value: formData.officeSize || "0" }
+            : {
+                name: "current_workstations",
+                value: formData.currentWorkstations || formData.numberOfEmployees || "0",
+              },
+          {
+            name: "workstation_utilization_percent",
+            value: formData.workstationUtilization || formData.utilization || "0",
+          },
+          {
+            name: "annual_savings_potential",
+            value: results ? Math.round(results.annualWaste * 0.75).toString() : "0",
+          },
+          { name: "calculation_method", value: calculationMethod },
+        ],
+      }
+
+      // Submit to HubSpot Forms API
+      const hubspotResponse = await fetch(
+        `https://api.hsforms.com/submissions/v3/integration/submit/8723359/623dd468-b19b-4891-9b8b-d54f80ead603`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(hubspotData),
+        },
+      )
+
+      console.log("[v0] HubSpot submission response:", hubspotResponse.status)
+
+      // Continue with internal API submission regardless of HubSpot result
       const response = await fetch("/api/submit-credentials", {
         method: "POST",
         headers: {
@@ -182,6 +225,36 @@ export default function SavingsCalculator() {
       const data = await response.json()
 
       if (data.success) {
+        try {
+          const emailCopyResponse = await fetch("/api/send-report", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              emailData: {
+                ...emailData,
+                // Add admin email here - you can replace with your actual email
+                adminEmail: "richard.stoop@procosgroup.com", // Updated admin email
+              },
+              calculatorData: {
+                ...formData,
+                annualCostPerWorkstation: formData.annualCostPerWorkstation,
+                // Include workstation data in email
+                currentWorkstations: formData.currentWorkstations || formData.numberOfEmployees || "0",
+                workstationUtilization: formData.workstationUtilization || formData.utilization || "0",
+              },
+              results,
+            }),
+          })
+
+          const emailResult = await emailCopyResponse.json()
+          console.log("[v0] Admin email copy sent:", emailResult.success)
+        } catch (emailError) {
+          console.error("[v0] Failed to send admin email copy:", emailError)
+          // Don't fail the main process if email copy fails
+        }
+
         setDownloadToken(data.downloadToken)
         setSubmitSuccess(true)
         setShowDownloadSection(true)
@@ -849,7 +922,7 @@ export default function SavingsCalculator() {
                 <Input
                   id="location"
                   type="text"
-                  placeholder="Den Haag"
+                  placeholder="The Netherlands" // Updated placeholder from "Den Haag" to "The Netherlands"
                   value={emailData.location}
                   onChange={(e) => setEmailData((prev) => ({ ...prev, location: e.target.value }))}
                   required

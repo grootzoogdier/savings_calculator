@@ -5,6 +5,7 @@ interface EmailData {
   email: string
   company: string
   location: string
+  adminEmail?: string
 }
 
 interface CalculatorData {
@@ -14,6 +15,9 @@ interface CalculatorData {
   workModel: string
   companyName: string
   includeOnDemand: boolean
+  currentWorkstations?: number
+  numberOfEmployees?: number
+  workstationUtilization?: number
 }
 
 interface Results {
@@ -83,6 +87,7 @@ export async function POST(request: NextRequest) {
         .summary { background: #ecfdf5; padding: 20px; border-radius: 8px; margin: 20px 0; }
         .cta { background: #1e40af; color: white; padding: 15px 30px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0; }
         .pdf-notice { background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+        .workstation-data { background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #0ea5e9; }
     </style>
 </head>
 <body>
@@ -95,18 +100,25 @@ export async function POST(request: NextRequest) {
     <div class="content">
         <div class="pdf-notice">
             <h3>📄 Complete PDF Report Attached</h3>
-            <p>Your comprehensive ROI analysis is attached as a PDF document. This detailed report includes:</p>
-            <ul>
-                <li>Executive summary with key findings</li>
-                <li>Detailed calculation methodology</li>
-                <li>Implementation strategies and next steps</li>
-                <li>Market analysis for ${emailData.location}</li>
-                <li>Employee experience benefits</li>
-            </ul>
+            <p>Your comprehensive ROI analysis is attached as a PDF document. This detailed report includes all relevant data and calculations.</p>
+        </div>
+
+        <div class="workstation-data">
+            <h3>📊 Workstation Analysis</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <div class="metric-value">${calculatorData.currentWorkstations || calculatorData.numberOfEmployees || "N/A"}</div>
+                    <div class="metric-label">Current Workstations</div>
+                </div>
+                <div>
+                    <div class="metric-value">${calculatorData.workstationUtilization || calculatorData.utilization || "N/A"}%</div>
+                    <div class="metric-label">Workstation Utilization</div>
+                </div>
+            </div>
         </div>
 
         <h2>Executive Summary</h2>
-        <p>By transitioning to a flexible workspace strategy, <strong>${emailData.company}</strong> can immediately reduce real estate costs by <strong>${results.costCutPercentage.toFixed(1)}%</strong>, optimizing a <strong>${formatCurrency(results.annualCost)}</strong> annual expense with minimal disruption.</p>
+        <p>By transitioning to a flexible workspace strategy, <strong>${emailData.company}</strong> can immediately reduce real estate costs by <strong>${results.costCutPercentage.toFixed(1)}%</strong>, optimizing a <strong>${formatCurrency(results.annualCost)}</strong> annual expense.</p>
         
         <div class="summary">
             <h3>Key Findings</h3>
@@ -124,24 +136,10 @@ export async function POST(request: NextRequest) {
                     <div class="metric-label">ROI Timeline</div>
                 </div>
                 <div>
-                    <div class="metric-value">${calculatorData.utilization}% → 85%</div>
+                    <div class="metric-value">${calculatorData.workstationUtilization || calculatorData.utilization}% → 85%</div>
                     <div class="metric-label">Space Efficiency</div>
                 </div>
             </div>
-        </div>
-
-        <h3>Your Current Situation</h3>
-        <div class="metric">
-            <div class="metric-value">${calculatorData.officeSize} m²</div>
-            <div class="metric-label">Office Space</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value">${formatCurrency(Number(calculatorData.monthlyCost))}</div>
-            <div class="metric-label">Monthly Cost</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value">${calculatorData.utilization}%</div>
-            <div class="metric-label">Current Utilization</div>
         </div>
 
         <h3>Financial Impact</h3>
@@ -151,47 +149,100 @@ export async function POST(request: NextRequest) {
         </div>
         <div class="metric">
             <div class="metric-value">${formatCurrency(results.monthlyWaste)}</div>
-            <div class="metric-label">Cash burned per month on empty desks</div>
+            <div class="metric-label">Monthly waste</div>
         </div>
         <div class="metric">
             <div class="metric-value">${results.costCutPercentage.toFixed(1)}%</div>
             <div class="metric-label">Potential cost reduction</div>
         </div>
 
-        <h3>Next Steps</h3>
-        <p>Ready to explore your flexible workspace options in ${emailData.location}? Our team can help you:</p>
-        <ul>
-            <li>Identify suitable flexible workspace locations</li>
-            <li>Plan a phased transition strategy</li>
-            <li>Calculate detailed implementation costs</li>
-            <li>Design a pilot program for your team</li>
-        </ul>
-
-        <div style="text-align: center; margin: 30px 0;">
-            <a href="#" class="cta">Schedule a Strategy Consultation</a>
-        </div>
-
         <p style="font-size: 12px; color: #6b7280; margin-top: 30px;">
-            This analysis is based on current market data and industry benchmarks. Results may vary based on specific implementation details and market conditions.<br>
-            Report ID: ${pdfData.reportId}
+            Report ID: ${pdfData.reportId} | Generated: ${new Date().toISOString()}
         </p>
     </div>
 </body>
 </html>
     `
 
-    // In a real implementation, you would send this email using a service like:
-    // - Resend
-    // - SendGrid
-    // - AWS SES
-    // - Nodemailer with SMTP
-    // And attach the generated PDF
+    const recipients = [emailData.email]
+    if (emailData.adminEmail) {
+      recipients.push(emailData.adminEmail)
+    }
 
-    // For now, we'll simulate the email sending
-    console.log("Email would be sent to:", emailData.email)
-    console.log("Subject:", emailSubject)
-    console.log("PDF filename:", pdfData.filename)
-    console.log("Content length:", emailContent.length)
+    try {
+      console.log("[v0] Attempting to send email via Resend...")
+      console.log("[v0] Recipients:", recipients)
+
+      const apiKey = process.env.RESEND_API_KEY?.trim()
+      const allEnvVars = Object.keys(process.env)
+      const resendVars = allEnvVars.filter((key) => key.includes("RESEND"))
+
+      console.log("[v0] All environment variables count:", allEnvVars.length)
+      console.log("[v0] RESEND-related variables:", resendVars)
+      console.log("[v0] Raw RESEND_API_KEY value:", JSON.stringify(process.env.RESEND_API_KEY))
+      console.log("[v0] Trimmed API key length:", apiKey ? apiKey.length : 0)
+      console.log("[v0] API key starts with 're_':", apiKey ? apiKey.startsWith("re_") : false)
+
+      if (!apiKey || apiKey.length === 0) {
+        const errorMsg = `RESEND_API_KEY environment variable is empty or not set properly. 
+        Raw value: ${JSON.stringify(process.env.RESEND_API_KEY)}
+        Available RESEND vars: ${resendVars.join(", ") || "none"}
+        
+        This is likely a Vercel environment variable configuration issue. 
+        Please check that the API key value is properly saved in Vercel settings.`
+
+        console.error("[v0] Environment variable error:", errorMsg)
+        throw new Error(errorMsg)
+      }
+
+      if (!apiKey.startsWith("re_")) {
+        throw new Error("Invalid Resend API key format. API key should start with 're_'")
+      }
+
+      const resendResponse = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: "onboarding@resend.dev", // Use this for testing, change to reports@procosgroup.com after domain verification
+          to: recipients,
+          subject: emailSubject,
+          html: emailContent,
+          attachments: [
+            {
+              filename: pdfData.filename,
+              content: pdfData.base64,
+            },
+          ],
+        }),
+      })
+
+      if (!resendResponse.ok) {
+        const errorData = await resendResponse.json()
+        console.error("[v0] Resend API error response:", errorData)
+        throw new Error(`Resend API error: ${errorData.message || resendResponse.status}`)
+      }
+
+      const emailResult = await resendResponse.json()
+      console.log("[v0] Email successfully sent via Resend:", emailResult.id)
+      console.log("[v0] Recipients:", recipients.join(", "))
+      console.log("[v0] Subject:", emailSubject)
+    } catch (emailError) {
+      console.error("[v0] Email sending failed:", emailError)
+      if (emailError instanceof Error) {
+        console.error("[v0] Error details:", emailError.message)
+      }
+      // Don't fail the entire request if email fails
+      return NextResponse.json({
+        success: true,
+        message: "Report generated successfully, but email delivery failed",
+        reportId: pdfData.reportId,
+        pdfFilename: pdfData.filename,
+        emailError: emailError instanceof Error ? emailError.message : "Unknown email error",
+      })
+    }
 
     // Simulate processing time
     await new Promise((resolve) => setTimeout(resolve, 1500))

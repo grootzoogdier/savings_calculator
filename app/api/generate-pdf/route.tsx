@@ -13,7 +13,6 @@ interface CalculatorData {
   utilization: string
   workModel: string
   companyName: string
-  includeOnDemand: boolean
 }
 
 interface Results {
@@ -368,20 +367,24 @@ export async function POST(request: NextRequest) {
 </html>
     `
 
-    // In a real implementation, you would use a library like:
-    // - Puppeteer to convert HTML to PDF
-    // - jsPDF for client-side PDF generation
-    // - PDFKit for server-side PDF creation
+    const base64Content = Buffer.from(htmlContent).toString("base64")
 
-    // For this demo, we'll return the HTML content that can be converted to PDF
     return NextResponse.json({
       success: true,
-      htmlContent,
+      base64: base64Content,
       reportId,
-      filename: `flexible-workspace-roi-${emailData.company.toLowerCase().replace(/\s+/g, "-")}-${reportId}.pdf`,
+      filename: `savings-report-${emailData.name.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.html`,
+      message: "HTML report generated successfully",
     })
   } catch (error) {
-    console.error("Error generating PDF:", error)
-    return NextResponse.json({ success: false, message: "Failed to generate PDF" }, { status: 500 })
+    console.error("Error generating HTML report:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to generate HTML report",
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

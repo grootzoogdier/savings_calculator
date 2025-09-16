@@ -35,22 +35,84 @@ interface RequestBody {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: RequestBody = await request.json()
+    console.log("[v0] API route called, attempting to parse request body...")
+
+    let body: RequestBody
+    try {
+      body = await request.json()
+      console.log("[v0] Successfully parsed JSON body")
+    } catch (parseError) {
+      console.error("[v0] JSON parsing failed:", parseError)
+      console.error("[v0] Request headers:", Object.fromEntries(request.headers.entries()))
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Invalid JSON in request body",
+          error: parseError instanceof Error ? parseError.message : "Unknown parsing error",
+        },
+        { status: 400 },
+      )
+    }
+
     const { emailData, calculatorData, results } = body
 
+    if (!emailData || !calculatorData || !results) {
+      console.error("[v0] Missing required fields in request body")
+      return NextResponse.json(
+        { success: false, message: "Missing required fields: emailData, calculatorData, or results" },
+        { status: 400 },
+      )
+    }
+
+    console.log("[v0] Request body validated successfully")
+
     // Generate PDF first
-    const pdfResponse = await fetch(`${request.nextUrl.origin}/api/generate-pdf`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    })
+    let pdfData
+    try {
+      console.log("[v0] Calling PDF generation API...")
+      const pdfResponse = await fetch(`${request.nextUrl.origin}/api/generate-pdf`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      })
 
-    const pdfData = await pdfResponse.json()
+      console.log("[v0] PDF API response status:", pdfResponse.status)
 
-    if (!pdfData.success) {
-      throw new Error("Failed to generate PDF")
+      if (!pdfResponse.ok) {
+        const errorText = await pdfResponse.text()
+        console.error("[v0] PDF generation failed:", pdfResponse.status, pdfResponse.statusText)
+        console.error("[v0] PDF error response:", errorText)
+        throw new Error(`PDF generation failed: ${pdfResponse.status} - ${errorText}`)
+      }
+
+      const responseText = await pdfResponse.text()
+      console.log("[v0] PDF response text length:", responseText.length)
+      console.log("[v0] PDF response preview:", responseText.substring(0, 200))
+
+      try {
+        pdfData = JSON.parse(responseText)
+        console.log("[v0] Successfully parsed PDF response")
+      } catch (pdfParseError) {
+        console.error("[v0] Failed to parse PDF response as JSON:", pdfParseError)
+        console.error("[v0] Raw PDF response:", responseText)
+        throw new Error("PDF API returned invalid JSON response")
+      }
+
+      if (!pdfData.success) {
+        throw new Error(`PDF generation failed: ${pdfData.message || "Unknown error"}`)
+      }
+    } catch (pdfError) {
+      console.error("[v0] PDF generation error:", pdfError)
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Failed to generate PDF report",
+          error: pdfError instanceof Error ? pdfError.message : "Unknown PDF error",
+        },
+        { status: 500 },
+      )
     }
 
     // Format currency for display
@@ -255,6 +317,14 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error("Error processing report request:", error)
-    return NextResponse.json({ success: false, message: "Failed to send report" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to send report",
+        error: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+      { status: 500 },
+    )
   }
 }

@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     const reportId = `roi-${Date.now()}`
     const currentDate = new Date().toLocaleDateString("en-GB")
 
-    // Create HTML content for PDF generation
+    // Create HTML content for the report
     const htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -58,16 +58,20 @@ export async function POST(request: NextRequest) {
     <meta charset="utf-8">
     <title>Flexible Workspace ROI Analysis</title>
     <style>
-        @page {
-            margin: 40px;
-            size: A4;
+        @media print {
+            @page {
+                margin: 40px;
+                size: A4;
+            }
         }
         body {
             font-family: 'Arial', sans-serif;
             line-height: 1.4;
             color: #333;
             margin: 0;
-            padding: 0;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
         }
         .header {
             background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
@@ -75,6 +79,7 @@ export async function POST(request: NextRequest) {
             padding: 30px;
             text-align: center;
             margin-bottom: 30px;
+            border-radius: 8px;
         }
         .header h1 {
             margin: 0 0 10px 0;
@@ -91,6 +96,7 @@ export async function POST(request: NextRequest) {
             padding: 25px;
             border-left: 4px solid #1e40af;
             margin-bottom: 30px;
+            border-radius: 4px;
         }
         .executive-summary h2 {
             color: #1e40af;
@@ -99,7 +105,7 @@ export async function POST(request: NextRequest) {
         }
         .key-metrics {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 20px;
             margin: 25px 0;
         }
@@ -109,6 +115,7 @@ export async function POST(request: NextRequest) {
             border-radius: 8px;
             text-align: center;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #e5e7eb;
         }
         .metric-value {
             font-size: 24px;
@@ -184,8 +191,10 @@ export async function POST(request: NextRequest) {
             color: #6b7280;
             text-align: center;
         }
-        .page-break {
-            page-break-before: always;
+        @media print {
+            .page-break {
+                page-break-before: always;
+            }
         }
     </style>
 </head>
@@ -377,11 +386,11 @@ export async function POST(request: NextRequest) {
       message: "HTML report generated successfully",
     })
   } catch (error) {
-    console.error("Error generating HTML report:", error)
+    console.error("Error generating report:", error)
     return NextResponse.json(
       {
         success: false,
-        message: "Failed to generate HTML report",
+        message: "Failed to generate report",
         error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

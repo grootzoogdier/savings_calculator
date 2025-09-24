@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { formatCurrency } from "@/utils/currencyFormatter"
+import { generateReportHTML, type PDFReportData } from "@/lib/pdf-generator"
 
 interface EmailData {
   name: string
@@ -18,6 +20,7 @@ interface CalculatorData {
   currentWorkstations?: number
   numberOfEmployees?: number
   workstationUtilization?: number
+  annualCostPerWorkstation?: string
 }
 
 interface Results {
@@ -25,6 +28,7 @@ interface Results {
   monthlyWaste: number
   costCutPercentage: number
   annualCost: number
+  calculationMethod: string
 }
 
 interface RequestBody {
@@ -43,7 +47,6 @@ export async function POST(request: NextRequest) {
       console.log("[v0] Successfully parsed JSON body")
     } catch (parseError) {
       console.error("[v0] JSON parsing failed:", parseError)
-      console.error("[v0] Request headers:", Object.fromEntries(request.headers.entries()))
       return NextResponse.json(
         {
           success: false,
@@ -66,72 +69,60 @@ export async function POST(request: NextRequest) {
 
     console.log("[v0] Request body validated successfully")
 
-    // Generate PDF first
-    let pdfData
     try {
-      console.log("[v0] Calling PDF generation API...")
-      const pdfResponse = await fetch(`${request.nextUrl.origin}/api/generate-pdf`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      console.log("[v0] Generating HTML report...")
+
+      // Calculate additional metrics
+      const potentialSavings = results.annualWaste * 0.75 // 75% recovery rate
+      const reportId = `roi-${Date.now()}`
+      const currentDate = new Date().toLocaleDateString("en-GB")
+
+      const reportData: PDFReportData = {
+        emailData,
+        calculatorData: {
+          ...calculatorData,
+          numberOfEmployees: calculatorData.numberOfEmployees?.toString() || "",
+          organisationName: calculatorData.companyName || emailData.company,
+          currentWorkstations:
+            calculatorData.currentWorkstations?.toString() || calculatorData.numberOfEmployees?.toString() || "",
+          workstationUtilization: calculatorData.workstationUtilization?.toString() || calculatorData.utilization || "",
+          annualCostPerWorkstation: calculatorData.annualCostPerWorkstation?.toString() || "9000", // Default value
         },
-        body: JSON.stringify(body),
-      })
-
-      console.log("[v0] PDF API response status:", pdfResponse.status)
-
-      if (!pdfResponse.ok) {
-        const errorText = await pdfResponse.text()
-        console.error("[v0] PDF generation failed:", pdfResponse.status, pdfResponse.statusText)
-        console.error("[v0] PDF error response:", errorText)
-        throw new Error(`PDF generation failed: ${pdfResponse.status} - ${errorText}`)
-      }
-
-      const responseText = await pdfResponse.text()
-      console.log("[v0] PDF response text length:", responseText.length)
-      console.log("[v0] PDF response preview:", responseText.substring(0, 200))
-
-      try {
-        pdfData = JSON.parse(responseText)
-        console.log("[v0] Successfully parsed PDF response")
-      } catch (pdfParseError) {
-        console.error("[v0] Failed to parse PDF response as JSON:", pdfParseError)
-        console.error("[v0] Raw PDF response:", responseText)
-        throw new Error("PDF API returned invalid JSON response")
-      }
-
-      if (!pdfData.success) {
-        throw new Error(`PDF generation failed: ${pdfData.message || "Unknown error"}`)
-      }
-    } catch (pdfError) {
-      console.error("[v0] PDF generation error:", pdfError)
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Failed to generate PDF report",
-          error: pdfError instanceof Error ? pdfError.message : "Unknown PDF error",
+        results: {
+          ...results,
+          calculationMethod: results.calculationMethod || "workstations", // Default to workstations for now
         },
-        { status: 500 },
-      )
-    }
+      }
 
-    // Format currency for display
-    const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat("de-DE", {
-        style: "currency",
-        currency: "EUR",
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      }).format(amount)
-    }
+      const comprehensiveHtmlReport = generateReportHTML(reportData)
 
-    // Calculate additional metrics
-    const potentialSavings = results.annualWaste * 0.75 // 75% recovery rate
+      // Convert HTML to base64 for email attachment
+      const htmlBase64 = Buffer.from(comprehensiveHtmlReport).toString("base64")
 
-    // Create email content
-    const emailSubject = `Your Flexible Workspace ROI Analysis - ${formatCurrency(potentialSavings)} Potential Savings`
+      console.log("[v0] HTML report generated successfully")
 
-    const emailContent = `
+      // Create email content
+      const emailSubject = `Your Flexible Workspace ROI Analysis - €${Math.round(potentialSavings).toLocaleString()} Potential Savings`
+
+      const safeParseNumber = (value: string | number): number => {
+        if (typeof value === "number") return value
+        const parsed = Number.parseFloat(value)
+        return isNaN(parsed) ? 0 : parsed
+      }
+
+      const safeFormatValue = (value: string | number, suffix = ""): string => {
+        if (!value || value === "" || value === "undefined" || value === "0") return "Not specified"
+        return `${value}${suffix}`
+      }
+
+      const formatFieldValue = (value: string | number, defaultValue?: string, suffix = ""): string => {
+        if (!value || value === "" || value === "undefined") {
+          return defaultValue ? `${defaultValue} (pre-filled)${suffix}` : `Not specified${suffix}`
+        }
+        return `${value}${suffix}`
+      }
+
+      const emailContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -143,13 +134,15 @@ export async function POST(request: NextRequest) {
         .content { background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; }
         .metric { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #10b981; }
         .metric-value { font-size: 24px; font-weight: bold; color: #1e40af; }
-        .metric-label { color: #6b7280; font-size: 14px; }
+        .metric-label { color: #6b7280; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
         .waste-metric { border-left-color: #ef4444; }
         .waste-metric .metric-value { color: #ef4444; }
         .summary { background: #ecfdf5; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .cta { background: #1e40af; color: white; padding: 15px 30px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0; }
-        .pdf-notice { background: #fef3c7; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b; }
-        .workstation-data { background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #0ea5e9; }
+        .input-summary { background: #f1f5f9; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .input-row { display: flex; justify-content: space-between; margin: 8px 0; }
+        .input-label { font-weight: 500; color: #475569; }
+        .input-value { color: #1e293b; }
+        .calculation-method { background: #dbeafe; padding: 12px; border-radius: 6px; margin-bottom: 16px; text-align: center; font-weight: 600; color: #1e40af; }
     </style>
 </head>
 <body>
@@ -160,27 +153,72 @@ export async function POST(request: NextRequest) {
     </div>
     
     <div class="content">
-        <div class="pdf-notice">
-            <h3>📄 Complete PDF Report Attached</h3>
-            <p>Your comprehensive ROI analysis is attached as a PDF document. This detailed report includes all relevant data and calculations.</p>
-        </div>
-
-        <div class="workstation-data">
-            <h3>📊 Workstation Analysis</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div>
-                    <div class="metric-value">${calculatorData.currentWorkstations || calculatorData.numberOfEmployees || "N/A"}</div>
-                    <div class="metric-label">Current Workstations</div>
-                </div>
-                <div>
-                    <div class="metric-value">${calculatorData.workstationUtilization || calculatorData.utilization || "N/A"}%</div>
-                    <div class="metric-label">Workstation Utilization</div>
-                </div>
-            </div>
-        </div>
-
         <h2>Executive Summary</h2>
-        <p>By transitioning to a flexible workspace strategy, <strong>${emailData.company}</strong> can immediately reduce real estate costs by <strong>${results.costCutPercentage.toFixed(1)}%</strong>, optimizing a <strong>${formatCurrency(results.annualCost)}</strong> annual expense.</p>
+        <p>Based on your current workspace configuration, <strong>${emailData.company}</strong> can achieve significant cost savings by transitioning to a flexible workspace strategy. Your analysis shows an immediate opportunity to reduce real estate costs by <strong>${results.costCutPercentage.toFixed(1)}%</strong> from your current <strong>${formatCurrency(results.annualCost)}</strong> annual expense.</p>
+        
+        <div class="input-summary">
+            <h3>Your Current Situation</h3>
+            <div class="calculation-method">
+                Calculations based on: ${results.calculationMethod === "workstations" ? "Workstations" : "Square Meters (M²)"}
+            </div>
+            
+            ${
+              results.calculationMethod === "workstations"
+                ? `
+            <div class="input-row">
+                <span class="input-label">Current Workstations:</span>
+                <span class="input-value">${formatFieldValue(calculatorData.currentWorkstations, calculatorData.numberOfEmployees)}</span>
+            </div>
+            <div class="input-row">
+                <span class="input-label">Workstation Utilization:</span>
+                <span class="input-value">${formatFieldValue(calculatorData.workstationUtilization, "50%", "%")}</span>
+            </div>
+            <div class="input-row">
+                <span class="input-label">Annual Cost per Workstation:</span>
+                <span class="input-value">${formatFieldValue(calculatorData.annualCostPerWorkstation, "€9,000")}</span>
+            </div>
+            `
+                : `
+            <div class="input-row">
+                <span class="input-label">Office Size:</span>
+                <span class="input-value">${formatFieldValue(calculatorData.officeSize, "", " m²")}</span>
+            </div>
+            <div class="input-row">
+                <span class="input-label">Monthly Cost:</span>
+                <span class="input-value">${safeParseNumber(calculatorData.monthlyCost) > 0 ? formatCurrency(safeParseNumber(calculatorData.monthlyCost)) : "Not specified"}</span>
+            </div>
+            <div class="input-row">
+                <span class="input-label">Average Occupancy:</span>
+                <span class="input-value">${formatFieldValue(calculatorData.utilization, "50%", "%")}</span>
+            </div>
+            `
+            }
+            
+            <div class="input-row">
+                <span class="input-label">Work Model:</span>
+                <span class="input-value">${calculatorData.workModel === "hybrid" ? "Hybrid" : calculatorData.workModel === "remote" ? "Remote-First" : "Traditional Office"}</span>
+            </div>
+            ${
+              calculatorData.numberOfEmployees && calculatorData.numberOfEmployees !== "0"
+                ? `
+            <div class="input-row">
+                <span class="input-label">Number of Employees:</span>
+                <span class="input-value">${calculatorData.numberOfEmployees}</span>
+            </div>
+            `
+                : ""
+            }
+            ${
+              calculatorData.includeOnDemand
+                ? `
+            <div class="input-row">
+                <span class="input-label">On-Demand Access:</span>
+                <span class="input-value">Included</span>
+            </div>
+            `
+                : ""
+            }
+        </div>
         
         <div class="summary">
             <h3>Key Findings</h3>
@@ -198,121 +236,95 @@ export async function POST(request: NextRequest) {
                     <div class="metric-label">ROI Timeline</div>
                 </div>
                 <div>
-                    <div class="metric-value">${calculatorData.workstationUtilization || calculatorData.utilization}% → 85%</div>
+                    <div class="metric-value">${results.calculationMethod === "workstations" ? formatFieldValue(calculatorData.workstationUtilization, "50%", "%") : formatFieldValue(calculatorData.utilization, "50%", "%")}</div>
                     <div class="metric-label">Space Efficiency</div>
                 </div>
             </div>
         </div>
 
-        <h3>Financial Impact</h3>
-        <div class="metric waste-metric">
-            <div class="metric-value">${formatCurrency(results.annualWaste)}</div>
-            <div class="metric-label">Annual waste on unused space</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value">${formatCurrency(results.monthlyWaste)}</div>
-            <div class="metric-label">Monthly waste</div>
-        </div>
-        <div class="metric">
-            <div class="metric-value">${results.costCutPercentage.toFixed(1)}%</div>
-            <div class="metric-label">Potential cost reduction</div>
-        </div>
+        <p><strong>Your comprehensive analysis report is attached</strong> with detailed calculations, methodology, and actionable recommendations tailored to your specific situation.</p>
 
         <p style="font-size: 12px; color: #6b7280; margin-top: 30px;">
-            Report ID: ${pdfData.reportId} | Generated: ${new Date().toISOString()}
+            Report ID: ${reportId} | Generated: ${new Date().toISOString()}
         </p>
     </div>
 </body>
 </html>
-    `
+      `
 
-    const recipients = [emailData.email]
-    recipients.push("mail@richardstoop.nl")
+      const recipients = ["mail@richardstoop.nl"]
 
-    try {
-      console.log("[v0] Attempting to send email via Resend...")
-      console.log("[v0] Recipients:", recipients)
+      try {
+        console.log("[v0] Attempting to send email via Resend...")
 
-      const apiKey = process.env.RESEND_API_KEY?.trim()
-      const allEnvVars = Object.keys(process.env)
-      const resendVars = allEnvVars.filter((key) => key.includes("RESEND"))
+        const apiKey = process.env.RESEND_API_KEY?.trim()
 
-      console.log("[v0] All environment variables count:", allEnvVars.length)
-      console.log("[v0] RESEND-related variables:", resendVars)
-      console.log("[v0] Raw RESEND_API_KEY value:", JSON.stringify(process.env.RESEND_API_KEY))
-      console.log("[v0] Trimmed API key length:", apiKey ? apiKey.length : 0)
-      console.log("[v0] API key starts with 're_':", apiKey ? apiKey.startsWith("re_") : false)
+        if (!apiKey || apiKey.length === 0) {
+          throw new Error("RESEND_API_KEY environment variable is not set")
+        }
 
-      if (!apiKey || apiKey.length === 0) {
-        const errorMsg = `RESEND_API_KEY environment variable is empty or not set properly. 
-        Raw value: ${JSON.stringify(process.env.RESEND_API_KEY)}
-        Available RESEND vars: ${resendVars.join(", ") || "none"}
-        
-        This is likely a Vercel environment variable configuration issue. 
-        Please check that the API key value is properly saved in Vercel settings.`
+        if (!apiKey.startsWith("re_")) {
+          throw new Error("Invalid Resend API key format. API key should start with 're_'")
+        }
 
-        console.error("[v0] Environment variable error:", errorMsg)
-        throw new Error(errorMsg)
+        const resendResponse = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: "onboarding@resend.dev",
+            to: recipients,
+            subject: emailSubject,
+            html: emailContent,
+            attachments: [
+              {
+                filename: `savings-report-${emailData.name.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.htm`,
+                content: htmlBase64,
+                type: "text/html", // Proper MIME type for HTML
+              },
+            ],
+          }),
+        })
+
+        if (!resendResponse.ok) {
+          const errorData = await resendResponse.json()
+          console.error("[v0] Resend API error response:", errorData)
+          throw new Error(`Resend API error: ${errorData.message || resendResponse.status}`)
+        }
+
+        const emailResult = await resendResponse.json()
+        console.log("[v0] Email successfully sent via Resend:", emailResult.id)
+
+        return NextResponse.json({
+          success: true,
+          message: "Report sent successfully with HTML attachment",
+          reportId: reportId,
+          attachments: ["HTML"],
+        })
+      } catch (emailError) {
+        console.error("[v0] Email sending failed:", emailError)
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Failed to send email",
+            error: emailError instanceof Error ? emailError.message : "Unknown email error",
+          },
+          { status: 500 },
+        )
       }
-
-      if (!apiKey.startsWith("re_")) {
-        throw new Error("Invalid Resend API key format. API key should start with 're_'")
-      }
-
-      const resendResponse = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+    } catch (reportError) {
+      console.error("[v0] Report generation error:", reportError)
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Failed to generate report",
+          error: reportError instanceof Error ? reportError.message : "Unknown report error",
         },
-        body: JSON.stringify({
-          from: "onboarding@resend.dev", // Use this for testing, change to reports@procosgroup.com after domain verification
-          to: recipients,
-          subject: emailSubject,
-          html: emailContent,
-          attachments: [
-            {
-              filename: pdfData.filename,
-              content: pdfData.base64,
-            },
-          ],
-        }),
-      })
-
-      if (!resendResponse.ok) {
-        const errorData = await resendResponse.json()
-        console.error("[v0] Resend API error response:", errorData)
-        throw new Error(`Resend API error: ${errorData.message || resendResponse.status}`)
-      }
-
-      const emailResult = await resendResponse.json()
-      console.log("[v0] Email successfully sent via Resend:", emailResult.id)
-      console.log("[v0] Recipients:", recipients.join(", "))
-      console.log("[v0] Subject:", emailSubject)
-    } catch (emailError) {
-      console.error("[v0] Email sending failed:", emailError)
-      if (emailError instanceof Error) {
-        console.error("[v0] Error details:", emailError.message)
-      }
-      // Don't fail the entire request if email fails
-      return NextResponse.json({
-        success: true,
-        message: "Report generated successfully, but email delivery failed",
-        reportId: pdfData.reportId,
-        pdfFilename: pdfData.filename,
-        emailError: emailError instanceof Error ? emailError.message : "Unknown email error",
-      })
+        { status: 500 },
+      )
     }
-
-    // Simulate processing time
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    return NextResponse.json({
-      success: true,
-      message: "Report sent successfully with PDF attachment",
-      reportId: pdfData.reportId,
-      pdfFilename: pdfData.filename,
-    })
   } catch (error) {
     console.error("Error processing report request:", error)
     return NextResponse.json(
@@ -320,7 +332,6 @@ export async function POST(request: NextRequest) {
         success: false,
         message: "Failed to send report",
         error: error instanceof Error ? error.message : "Unknown error",
-        stack: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 },
     )

@@ -248,8 +248,19 @@ export default function SavingsCalculator() {
             }),
           })
 
-          const emailResult = await emailCopyResponse.json()
-          console.log("[v0] Admin email copy sent:", emailResult.success)
+          if (!emailCopyResponse.ok) {
+            const errorText = await emailCopyResponse.text()
+            console.error("[v0] Failed to send admin email copy:", errorText)
+            // Don't fail the main process if email copy fails
+          } else {
+            const contentType = emailCopyResponse.headers.get("content-type")
+            if (contentType && contentType.includes("application/json")) {
+              const emailResult = await emailCopyResponse.json()
+              console.log("[v0] Admin email copy sent:", emailResult.success)
+            } else {
+              console.log("[v0] Admin email copy response received (non-JSON)")
+            }
+          }
         } catch (emailError) {
           console.error("[v0] Failed to send admin email copy:", emailError)
           // Don't fail the main process if email copy fails
